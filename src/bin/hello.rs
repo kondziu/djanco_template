@@ -47,7 +47,7 @@ macro_rules! init_timing_log {
 }
 
 macro_rules! timed_query {
-        ($method:path, $database:expr, $log:expr) => {{
+        ($method:path[$database:expr, $log:expr]) => {{
             let name: &str = std::stringify!($method);
 
             eprintln!("Starting query {}...", name);
@@ -58,7 +58,7 @@ macro_rules! timed_query {
 
             let error = result.map_or_else(
                 |error| { format!("\"{}\"", error) },
-                |ok: _| { String::new()            },
+                |_    | { String::new()            },
             );
 
             let mut timing_log = OpenOptions::new()
@@ -85,6 +85,14 @@ pub fn main() {
     let options = CommandLineOptions::parse();
     if options.archive {
         // add this project at this commit into our GH repo for repro purposes
+        //
+        // git clone REPRO ../repro # clone repro archive into PATH
+        // cd repro
+        // git checkout -m "PACKAGE_NAME" # if already exists just checkout, if not, create and checkout
+        // rm everything from repro
+        // copy everything from PACKAGE_ROOT to repro
+        // commit repro with message
+        //
     }
 
     let log = Log::new(LOG_LEVEL);
@@ -96,7 +104,9 @@ pub fn main() {
     );
 
     macro_rules! execute_query {
-        ($method:path) => { timed_query!($method, &database, &log); }
+        ($method:path) => {
+            timed_query!($method[&database, &log]);
+        }
     }
 
     init_timing_log!();
