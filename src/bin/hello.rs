@@ -9,6 +9,7 @@ use std::fs::OpenOptions;
 use std::fs::File;
 use std::io::Write;
 use std::env::temp_dir;
+use std::os;
 use git2::{BranchType, Branch};
 
 // These are automatically generated for the query.
@@ -135,7 +136,7 @@ pub fn clone_repository(url: &str) -> (git2::Repository, PathBuf) {
 
 pub fn find_or_create_branch<'a>(repository: &'a git2::Repository, url: &str, branch_name: &str) -> Branch<'a> {
     repository.find_branch(branch_name, BranchType::Local).map_or_else(
-        |error| {
+        |_error| {
             println!("Creating new branch {} in repository {}", branch_name, url);
 
             let head = repository.head().unwrap();
@@ -160,18 +161,67 @@ pub fn checkout_branch(repository: &git2::Repository, branch: &git2::Branch) {
     let branch_spec = format!("refs/heads/{}", branch_name);
 
     repository.checkout_tree(&repository.revparse_single(&branch_spec).unwrap(), None).unwrap();
-    repository.set_head(&branch_spec);
+    repository.set_head(&branch_spec).unwrap();
 }
 
+pub fn wipe_repository_contents(repository_path: &PathBuf) {
+    println!("Removing current contents of repository at {:?}", repository_path);
+    std::fs::read_dir(&repository_path)
+        .expect(&format!("Cannot read directory {:?}", repository_path))
+        .map(|entry| {
+            entry.expect(&format!("Cannot read entry from directory {:?}", repository_path))
+        })
+        .filter(|entry| entry.file_name() != ".git")
+        .map(|entry| entry.path())
+        .for_each(|path| {
+            println!("Removing {:?}", path);
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).expect(&format!("Cannot remove directory {:?}", path))
+            } else {
+                std::fs::remove_file(&path).expect(&format!("Cannot remove file {:?}", path))
+            }
+        });
+}
+
+pub fn populate_directory_from(repository_path: &PathBuf, project_path: &PathBuf) {
+    println!("Populating directory {:?} from {:?}", repository_path, project_path);
+    std::fs::read_dir(&project_path)
+        .expect(&format!("Cannot read directory {:?}", repository_path))
+        .map(|entry| {
+            entry.expect(&format!("Cannot read entry from directory {:?}", repository_path))
+        })
+        .filter(|entry| entry.file_name() != ".git")
+        .map(|entry| (entry.file_name(), entry.path()))
+        .for_each(|(filename, path)| {
+            println!("Copying {:?}", path);
+            if path.is_dir() {
+                unimplemented!()
+            } else {
+                unimplemented!()
+            }
+        });
+}
+
+// add this project at this commit into our GH repo for repro purposes
 pub fn create_project_archive() {
-    // add this project at this commit into our GH repo for repro purposes
-
-    // git clone REPRO ../repro # clone repro archive into PATH
-    // cd repro
+    // git clone REPRO ../repro # clone repro archive into PATH; cd repro
     let (repository, repository_path) = clone_repository(REPRO_REPO);
-    let branch = find_or_create_branch(&repository, REPRO_REPO, PROJECT_NAME);
 
+    // git checkout -m "PACKAGE_NAME" # if already exists just checkout, if not, create and checkout
+    let branch = find_or_create_branch(&repository, REPRO_REPO, PROJECT_NAME);
     checkout_branch(&repository, &branch);
+
+    // rm everything from repro
+    wipe_repository_contents(&repository_path);
+
+    // copy everything from PACKAGE_ROOT to repro
+
+
+
+
+
+
+    // commit repro with message
 
     unimplemented!()
 
@@ -214,9 +264,7 @@ pub fn create_project_archive() {
     // } else {
     //     repo.
     // }
-    // git checkout -m "PACKAGE_NAME" # if already exists just checkout, if not, create and checkout
-    // rm everything from repro
-    // copy everything from PACKAGE_ROOT to repro
-    // commit repro with message
+
+
     //
 }
