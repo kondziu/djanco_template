@@ -74,11 +74,12 @@ macro_rules! timed_query {
         }}
     }
 
-const DATASET_PATH: &'static str = "/dejacode/tiny-mk2/";
-const CACHE_PATH: &'static str = "/dejacode/djanco/cache/tiny-mk2";
-//const OUTPUT_PATH: &'static str = "/dejacode/djanco/output-tiny-mk2/";
+// These are automatically generated for the query.
+const DATASET_PATH: &'static str = "/data/djcode/example/dataset/";
+const CACHE_PATH: &'static str = "/data/djcode/example/cache/";
+const OUTPUT_PATH: &'static str = "/data/djcode/example/output/";
 const SAVEPOINT: i64 = 1606780800; // == 1st December 2020
-const SUBSTORES: [&'static str; 4] = ["C++", "C", "Python", "SmallProjects"];
+const SUBSTORES: [Store; 1] = [Store::Large(store::Language::JavaScript)];
 const LOG_LEVEL: Verbosity = Verbosity::Debug;
 
 pub fn main() {
@@ -100,8 +101,9 @@ pub fn main() {
         DATASET_PATH,
         CACHE_PATH,
         SAVEPOINT,
-        SUBSTORES.iter().map(|e| e.to_string()).collect()
-    );
+        SUBSTORES.iter().map(|store| store.clone()).collect(),
+        log.clone()
+    ).unwrap(); // TODO handle error
 
     macro_rules! execute_query {
         ($method:path) => {

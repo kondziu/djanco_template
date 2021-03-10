@@ -2,11 +2,13 @@ pub mod mymod;
 pub mod butts;
 
 use djanco_ext::*;
+use djanco::*;
 use djanco::data::Database;
 use djanco::log::Log;
+
 use anyhow::*;
 
-#[query(May, 2020)]
+#[djanco(May, 2020)]
 pub fn hello_world(db: &Database, _log: &Log) -> Result<()> {
     db.projects().count();
     bail!("oh noes!")
@@ -23,7 +25,7 @@ pub mod inner {
     use djanco::log::Log;
     use anyhow::*;
 
-    #[query(May, 2020)]
+    #[djanco(May, 2020)]
     pub fn hello_world(db: &Database, _log: &Log) -> Result<()> {
         db.projects().count();
         Ok(())
