@@ -13,3 +13,5 @@ djanco = { path = "../../djanco" }
 #{ git = "https://github.com/PRL-PRG/djanco.git", branch = "mark3" }
 djanco_ext = { path = "../djanco_ext" }
 syn = { version = "1.0.57", features = ["full", "extra-traits"] }
+git2 = "0.13"
+tempfile = "3.2.0"
