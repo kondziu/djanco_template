@@ -14,4 +14,7 @@ djanco = { path = "../../djanco" }
 djanco_ext = { path = "../djanco_ext" }
 syn = { version = "1.0.57", features = ["full", "extra-traits"] }
 git2 = "0.13"
+git2_credentials = "0.7.1"
 tempfile = "3.2.0"
+
+fs_extra = "1.2.0" # copying directories

@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::Write;
 use std::env::temp_dir;
 use std::os;
-use git2::{BranchType, Branch};
+use git2::{BranchType, Branch, PushOptions, Error, Cred};
 
 // These are automatically generated for the query.
 const PROJECT_NAME: &'static str = "djanco_template";
@@ -20,8 +20,7 @@ const OUTPUT_PATH: &'static str = "/data/djcode/example/output/";
 const SAVEPOINT: i64 = 1606780800; // 1st December 2020
 const SUBSTORES: [Store; 1] = [Store::Large(store::Language::JavaScript)];
 const LOG_LEVEL: Verbosity = Verbosity::Debug;
-const REPRO_REPO: &'static str = "https://github.com/kondziu/repro-test.git"; // FIXME
-
+const REPRO_REPO: &'static str = "git@github.com:kondziu/repro-test.git"; // FIXME
 
 #[derive(Clap)]
 #[clap(version = "1.0", author = "Konrad Siek <konrad.siek@gmail.com>")]
@@ -128,7 +127,21 @@ pub fn clone_repository(url: &str) -> (git2::Repository, PathBuf) {
 
     println!("Reproduction repository cloned into {:?} from {}", &repository_path, url);
 
-    let repository = git2::Repository::clone(url, &repository_path)
+    let git_config = git2::Config::open_default().unwrap();
+    let mut credential_handler = git2_credentials::CredentialHandler::new(git_config);
+
+    let mut callbacks = git2::RemoteCallbacks::new();
+    callbacks.credentials(move |url, username, allowed| {
+        credential_handler.try_next_credential(url, username, allowed)
+    });
+
+    let mut fetch_options = git2::FetchOptions::new();
+    fetch_options.remote_callbacks(callbacks);
+
+    let mut builder = git2::build::RepoBuilder::new();
+    builder.fetch_options(fetch_options);
+
+    let repository = builder.clone(url, &repository_path)
         .expect(&format!("Cannot clone repository {} into directory {:?}", url, repository_path));
 
     (repository, repository_path)
@@ -174,7 +187,7 @@ pub fn wipe_repository_contents(repository_path: &PathBuf) {
         .filter(|entry| entry.file_name() != ".git")
         .map(|entry| entry.path())
         .for_each(|path| {
-            println!("Removing {:?}", path);
+            println!("  - {:?}", path);
             if path.is_dir() {
                 std::fs::remove_dir_all(&path).expect(&format!("Cannot remove directory {:?}", path))
             } else {
@@ -185,6 +198,8 @@ pub fn wipe_repository_contents(repository_path: &PathBuf) {
 
 pub fn populate_directory_from(repository_path: &PathBuf, project_path: &PathBuf) {
     println!("Populating directory {:?} from {:?}", repository_path, project_path);
+
+    let copy_options = fs_extra::dir::CopyOptions::new();
     std::fs::read_dir(&project_path)
         .expect(&format!("Cannot read directory {:?}", repository_path))
         .map(|entry| {
@@ -192,79 +207,74 @@ pub fn populate_directory_from(repository_path: &PathBuf, project_path: &PathBuf
         })
         .filter(|entry| entry.file_name() != ".git")
         .map(|entry| (entry.file_name(), entry.path()))
-        .for_each(|(filename, path)| {
-            println!("Copying {:?}", path);
-            if path.is_dir() {
-                unimplemented!()
+        .for_each(|(filename, source_path)| {
+            let mut target_path = PathBuf::new();
+            target_path.push(repository_path.clone());
+            target_path.push(filename.to_str().unwrap().to_owned());
+
+            println!("  - {:?} -> {:?}", source_path, target_path);
+            if source_path.is_dir() {
+                fs_extra::dir::copy(source_path, repository_path, &copy_options)
+                    .expect("Failed to copy directory");
             } else {
-                unimplemented!()
+                std::fs::copy(source_path, target_path)
+                    .expect("Failed to copy file.");
             }
         });
 }
 
-// add this project at this commit into our GH repo for repro purposes
-pub fn create_project_archive() {
-    // git clone REPRO ../repro # clone repro archive into PATH; cd repro
-    let (repository, repository_path) = clone_repository(REPRO_REPO);
+pub fn commit_all<S>(repository: &git2::Repository, message: S) where S: Into<String> {
+    let message = message.into();
 
-    // git checkout -m "PACKAGE_NAME" # if already exists just checkout, if not, create and checkout
+    let signature = repository.signature().unwrap();
+    let mut index = repository.index().unwrap();
+
+    let mut status_options = git2::StatusOptions::new();
+    status_options.include_ignored(false);
+    status_options.include_untracked(true);
+    status_options.recurse_untracked_dirs(true);
+    let statuses = repository.statuses(Some(&mut status_options)).unwrap();
+
+    let filenames = statuses.iter().map(|e| e.path().unwrap().to_owned());
+    index.add_all(filenames, git2::IndexAddOption::DEFAULT, None);
+    index.write().unwrap();
+
+    let tree_id = index.write_tree().unwrap();
+    let tree = repository.find_tree(tree_id).unwrap();
+
+    let head = repository.head().unwrap();
+    let head_oid = head.target().unwrap();
+    let parent = repository.find_commit(head_oid).unwrap();
+
+    repository.commit(Some("HEAD"), &signature, &signature, &message, &tree, &[&parent]).unwrap();
+}
+
+pub fn push(repository: &git2::Repository, branch: S) where S: Into<String> {
+    let mut remote = repository.find_remote("origin").expect("No `origin` remote in repository");
+
+    let git_config = git2::Config::open_default().unwrap();
+    let mut credential_handler = git2_credentials::CredentialHandler::new(git_config);
+
+    let mut callbacks = git2::RemoteCallbacks::new();
+    callbacks.credentials(move |url, username, allowed| {
+        credential_handler.try_next_credential(url, username, allowed)
+    });
+
+    let mut push_options = git2::PushOptions::new();
+    push_options.remote_callbacks(callbacks);
+
+    remote.refspecs().for_each(|e| println!("{:?}", e.str()));
+
+    remote.push(&[&format!("refs/heads/{}", branch)], Some(&mut push_options))
+        .expect(&format!("Error pushing to {}", remote.url().unwrap()));
+}
+
+pub fn create_project_archive() {
+    let (repository, repository_path) = clone_repository(REPRO_REPO);
     let branch = find_or_create_branch(&repository, REPRO_REPO, PROJECT_NAME);
     checkout_branch(&repository, &branch);
-
-    // rm everything from repro
     wipe_repository_contents(&repository_path);
-
-    // copy everything from PACKAGE_ROOT to repro
-
-
-
-
-
-
-    // commit repro with message
-
-    unimplemented!()
-
-    // let existing_branches = repo.branches(None)
-    //     .expect(&format!("Cannot list branches in repository {}", REPRO_REPO));
-
-
-
-    // let branch = repo.find_branch(PROJECT_NAME, BranchType::Local)
-    //     .unwrap_or_else(|error| {
-    //         println!("Creating new branch {} in repository {}", PROJECT_NAME, REPRO_REPO);
-    //         repo.branch(PROJECT_NAME, &head_commit, false)
-    //             .expect(&format!("Cannot create a new branch {} in repository {}",
-    //                              PROJECT_NAME, REPRO_REPO))
-    //     });
-
-
-
-    // let obj = repo.revparse_single(&branch_spec).unwrap();
-    // repo.checkout_tree(&repo.revparse_single(&branch_spec).unwrap(), None).unwrap();
-    // repo.set_head(&branch_spec);
-
-    // let already_exists = existing_branches
-    //     .map(|branch| {
-    //         branch
-    //             .expect(&format!("Cannot read branch in repository {}", REPRO_REPO))
-    //     })
-    //     .map(|(branch, _branch_type)| {
-    //         println!("{:?}", _branch_type);
-    //         branch.name().map(|e| e.map(|e| e.to_owned()))
-    //             .expect(&format!("Cannot read branch name in repository {}", REPRO_REPO))
-    //     })
-    //     .map(|branch_name| { println!("{:?}", branch_name); branch_name })
-    //     .any(|branch_name| branch_name.map_or(false, |name| name == PROJECT_NAME));
-
-    // let repository.
-    //
-    // if already_exists {
-    //     repo.branch()
-    // } else {
-    //     repo.
-    // }
-
-
-    //
+    populate_directory_from(&repository_path, &std::env::current_dir().unwrap());
+    commit_all(&repository, PROJECT_NAME);
+    push(&repository, PROJECT_NAME);
 }
