@@ -9,10 +9,11 @@ use djanco_template;
 use std::fs::OpenOptions;
 use std::fs::File;
 use std::io::Write;
-use git2::{BranchType, Branch};
+//use git2::{BranchType, Branch, AutotagOption, Direction};
+use git2::BranchType::{Remote, Local};
 
 // These are automatically generated for the query.
-const PROJECT_NAME: &'static str = "djanco_template";                   // FIXME
+const PROJECT_NAME: &'static str = "djanco_template_xxx";                   // FIXME
 const DATASET_PATH: &'static str = "/data/djcode/example/dataset/";     // FIXME
 const CACHE_PATH: &'static str = "/data/djcode/example/cache/";         // FIXME
 const SAVEPOINT: i64 = 1606780800; // 1st December 2020
@@ -80,7 +81,7 @@ macro_rules! timed_query {
 
             let mut timing_log_path = $output.clone();
             timing_log_path.push("timing.csv");
-            std::fs::create_dir(&$output)
+            std::fs::create_dir_all(&$output)
                 .expect(&format!("Cannot create directory {:?}.", &$output));
 
             let mut timing_log = OpenOptions::new()
@@ -162,35 +163,97 @@ fn clone_repository(url: &str) -> (git2::Repository, PathBuf) {
     (repository, repository_path)
 }
 
-fn find_or_create_branch<'a>(repository: &'a git2::Repository, url: &str, branch_name: &str) -> Branch<'a> {
-    repository.find_branch(branch_name, BranchType::Local).map_or_else(
-        |_error| {
-            println!("Creating new branch {} in repository {}", branch_name, url);
+fn find_or_create_branch<'a>(repository: &'a git2::Repository, url: &str, branch_name: &str) {
+    // for branch in repository.branches(None).unwrap() {
+    //     let (b, bt) = branch.unwrap();
+    //     println!("{:?} -> {:?}", b.name(), bt);
+    // }
 
-            let head = repository.head().unwrap();
-            let head_oid = head.target().unwrap();
-            let head_commit = repository.find_commit(head_oid).unwrap();
+    if let Ok(branch) = repository.find_branch(branch_name, Local) {
+        println!("Local branch {} exists in repository {}, checking out.", branch_name, url);
 
-            repository.branch(PROJECT_NAME, &head_commit, false)
-                .expect(&format!("Cannot create a new branch {} in repository {}",
-                                 branch_name, url))
-        },
+        let branch_name = branch.name().unwrap().unwrap();
+        let branch_spec = format!("refs/heads/{}", branch_name);
 
-        |branch| {
-            println!("Found branch {} in repository {}", branch_name, url);
-            branch
-        },
-    )
+        repository.checkout_tree(&repository.revparse_single(&branch_spec).unwrap(), None).unwrap();
+        repository.set_head(&branch_spec).unwrap();
+
+        //return branch;
+    } else if let Ok(_branch) = repository.find_branch(&format!("origin/{}", branch_name), Remote) {
+        println!("Remote branch {} exists in repository {}, checking out.", branch_name, url);
+        println!("Creating local branch {} in repository {}", branch_name, url);
+
+        let git_config = git2::Config::open_default().unwrap();
+        let mut credential_handler = git2_credentials::CredentialHandler::new(git_config);
+
+        let mut callbacks = git2::RemoteCallbacks::new();
+        callbacks.credentials(move |url, username, allowed| {
+            credential_handler.try_next_credential(url, username, allowed)
+        });
+
+        let mut fetch_options = git2::FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+
+        repository.find_remote("origin").unwrap()
+            .fetch(&[branch_name], Some(&mut fetch_options), None).unwrap();
+
+        let fetch_head = repository.find_reference("FETCH_HEAD").unwrap();
+        let fetch_commit = repository.reference_to_annotated_commit(&fetch_head).unwrap();
+        let (analysis, _preference) = repository.merge_analysis(&[&fetch_commit]).unwrap();
+
+        if analysis.is_up_to_date() {
+            println!("Up to date with remote for branch {} at repository {}", branch_name, url);
+        } else if analysis.is_fast_forward() {
+            println!("Fast forwarding to remote for branch {} at repository {}", branch_name, url);
+            let refname = format!("refs/heads/{}", branch_name);
+            if let Ok(mut reference) = repository.find_reference(&refname) {
+                reference.set_target(fetch_commit.id(), "Fast-Forward").unwrap();
+                repository.set_head(&refname).unwrap();
+                repository.checkout_head(Some(git2::build::CheckoutBuilder::default().force())).unwrap();
+            } else {
+                repository.reference(&refname, fetch_commit.id(), true,
+                                     &format!("Setting {} to {}", branch_name, fetch_commit.id())).unwrap();
+                repository.set_head(&refname).unwrap();
+                repository.checkout_head(Some(
+                    git2::build::CheckoutBuilder::default()
+                        .allow_conflicts(true)
+                        .conflict_style_merge(true)
+                        .force(),
+                )).unwrap();
+            }
+        } else {
+            panic!("Cannot fast forward to remote for branch {} at repository {}", branch_name, url);
+        }
+
+        //return repository.find_branch(branch_name, Local).unwrap();
+    } else {
+        println!("Creating new branch {} in repository {}", branch_name, url);
+
+        let head = repository.head().unwrap();
+        let head_oid = head.target().unwrap();
+        let head_commit = repository.find_commit(head_oid).unwrap();
+
+        let branch = repository.branch(PROJECT_NAME, &head_commit, false)
+                     .expect(&format!("Cannot create a new branch {} in repository {}",
+                                      branch_name, url));
+
+        let branch_name = branch.name().unwrap().unwrap();
+        let branch_spec = format!("refs/heads/{}", branch_name);
+
+        repository.checkout_tree(&repository.revparse_single(&branch_spec).unwrap(), None).unwrap();
+        repository.set_head(&branch_spec).unwrap();
+
+    }
 }
 
-fn checkout_branch(repository: &git2::Repository, branch: &git2::Branch) {
-
-    let branch_name = branch.name().unwrap().unwrap();
-    let branch_spec = format!("refs/heads/{}", branch_name);
-
-    repository.checkout_tree(&repository.revparse_single(&branch_spec).unwrap(), None).unwrap();
-    repository.set_head(&branch_spec).unwrap();
-}
+// fn checkout_branch(repository: &git2::Repository, branch: &git2::Branch) {
+//
+//     let branch_name = branch.name().unwrap().unwrap();
+//     let branch_spec = format!("refs/heads/{}", branch_name);
+//
+//     repository.checkout_tree(&repository.revparse_single(&branch_spec).unwrap(), None).unwrap();
+//     repository.set_head(&branch_spec).unwrap();
+// }
 
 fn wipe_repository_contents(repository_path: &PathBuf) {
     println!("Removing current contents of repository at {:?}", repository_path);
@@ -286,8 +349,8 @@ fn push<S>(repository: &git2::Repository, branch: S) where S: Into<String> {
 
 pub fn create_project_archive(project_name: &str, repository_url: &str) -> PathBuf {
     let (repository, repository_path) = clone_repository(repository_url);
-    let branch = find_or_create_branch(&repository, repository_url, project_name);
-    checkout_branch(&repository, &branch);
+    find_or_create_branch(&repository, repository_url, project_name);
+    //checkout_branch(&repository, &branch);
     wipe_repository_contents(&repository_path);
     populate_directory_from(&repository_path, &std::env::current_dir().unwrap());
     commit_all(&repository, project_name);
