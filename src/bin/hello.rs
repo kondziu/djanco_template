@@ -101,9 +101,11 @@ macro_rules! timed_query {
 pub fn main() {
     let options = CommandLineOptions::parse();
 
-    //if options.archive {
-    let repository = create_project_archive(PROJECT_NAME, REPRO_REPO);
-    //}
+    let repository = if options.archive {
+        Some(create_project_archive(PROJECT_NAME, REPRO_REPO))
+    } else {
+        None
+    };
 
     let log = Log::new(LOG_LEVEL);
     let database = Djanco::from_spec(
@@ -131,9 +133,9 @@ pub fn main() {
 
     // compile elapsed times, check for successes, write all that to a file   if options.archive() {
     // add the results of the query into our GH repo or another location for repro purposes
-    //if options.archive && !options.do_not_archive_results {
-        add_results(PROJECT_NAME, &repository, &options.output_path, options.size_limit);
-    //}
+    if options.archive && !options.do_not_archive_results {
+        add_results(PROJECT_NAME, &repository.unwrap(), &options.output_path, options.size_limit);
+    }
 
 }
 
@@ -164,11 +166,6 @@ fn clone_repository(url: &str) -> (git2::Repository, PathBuf) {
 }
 
 fn find_or_create_branch<'a>(repository: &'a git2::Repository, url: &str, branch_name: &str) {
-    // for branch in repository.branches(None).unwrap() {
-    //     let (b, bt) = branch.unwrap();
-    //     println!("{:?} -> {:?}", b.name(), bt);
-    // }
-
     if let Ok(branch) = repository.find_branch(branch_name, Local) {
         println!("Local branch {} exists in repository {}, checking out.", branch_name, url);
 
@@ -178,7 +175,6 @@ fn find_or_create_branch<'a>(repository: &'a git2::Repository, url: &str, branch
         repository.checkout_tree(&repository.revparse_single(&branch_spec).unwrap(), None).unwrap();
         repository.set_head(&branch_spec).unwrap();
 
-        //return branch;
     } else if let Ok(_branch) = repository.find_branch(&format!("origin/{}", branch_name), Remote) {
         println!("Remote branch {} exists in repository {}, checking out.", branch_name, url);
         println!("Creating local branch {} in repository {}", branch_name, url);
@@ -225,7 +221,6 @@ fn find_or_create_branch<'a>(repository: &'a git2::Repository, url: &str, branch
             panic!("Cannot fast forward to remote for branch {} at repository {}", branch_name, url);
         }
 
-        //return repository.find_branch(branch_name, Local).unwrap();
     } else {
         println!("Creating new branch {} in repository {}", branch_name, url);
 
@@ -242,18 +237,8 @@ fn find_or_create_branch<'a>(repository: &'a git2::Repository, url: &str, branch
 
         repository.checkout_tree(&repository.revparse_single(&branch_spec).unwrap(), None).unwrap();
         repository.set_head(&branch_spec).unwrap();
-
     }
 }
-
-// fn checkout_branch(repository: &git2::Repository, branch: &git2::Branch) {
-//
-//     let branch_name = branch.name().unwrap().unwrap();
-//     let branch_spec = format!("refs/heads/{}", branch_name);
-//
-//     repository.checkout_tree(&repository.revparse_single(&branch_spec).unwrap(), None).unwrap();
-//     repository.set_head(&branch_spec).unwrap();
-// }
 
 fn wipe_repository_contents(repository_path: &PathBuf) {
     println!("Removing current contents of repository at {:?}", repository_path);
@@ -362,11 +347,6 @@ pub fn add_results(project_name: &str, repository_path: &PathBuf, results_dir: &
     let repository = git2::Repository::open(repository_path)
         .expect(&format!("Cannot re-open repository {:?}", repository_path));
 
-    // // Find branch, mostly for pushing later.
-    // let branch = find_or_create_branch(&repository, repository_url, project_name);
-    //
-    // // We should already be on this branch, but just in case.
-    // checkout_branch(&repository, &branch);
     let size = fs_extra::dir::get_size(results_dir)
         .expect(&format!("Cannot measure size of directory {:?}", results_dir));
 
@@ -383,15 +363,12 @@ pub fn add_results(project_name: &str, repository_path: &PathBuf, results_dir: &
     std::fs::create_dir_all(&output_in_repository)
         .expect(&format!("Cannot create directory {:?}", output_in_repository));
 
-    // fs_extra::dir::create(output_in_repository, false)
-    //
     let copy_options = fs_extra::dir::CopyOptions::new();
 
     fs_extra::dir::copy(&results_dir, &output_in_repository, &copy_options)
         .expect(&format!("Failed to copy directory {:?} to {:?}",
                          results_dir, output_in_repository));
 
-    // add -u, commit, push
     commit_all(&repository, &format!("{}: output", project_name));
     push(&repository, project_name); // FIXME
 }
