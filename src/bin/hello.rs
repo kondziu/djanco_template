@@ -1,6 +1,4 @@
-// use std::io::Write;
-
-use clap::{Clap, crate_name};
+use clap::Clap;
 
 use djanco::*;
 use djanco::log::*;
@@ -8,16 +6,16 @@ use djanco::utils::*;
 
 use djanco_template;
 
-// These are automatically generated for the query.
-const PROJECT_NAME: &'static str = crate_name!();
+// These are automatically generated for the crate.
+const PROJECT_NAME: &'static str = "djanco_template";
 const SAVEPOINT: i64 = 1606780800; // 1st December 2020
 const SUBSTORES: [Store; 1] = [Store::Large(store::Language::JavaScript)];
 
 pub fn main() {
     let options = CommandLineOptions::parse();
 
-    let repository = if options.archive {
-        Some(create_project_archive(PROJECT_NAME, options.repository.as_str()))
+    let repository = if let Some(repository) = options.repository.as_ref() {
+        Some(create_project_archive(PROJECT_NAME, repository.as_str()))
     } else {
         None
     };
@@ -37,6 +35,7 @@ pub fn main() {
         }
     }
 
+    // These are automatically generated for the crate.
     init_timing_log!();
     execute_query!(djanco_template::hello_world);
     execute_query!(djanco_template::inner::hello_world);
@@ -46,7 +45,7 @@ pub fn main() {
     execute_query!(djanco_template::butts::butter::not_omitted);
     execute_query!(djanco_template::butts::butter::xxxx);
 
-    if options.archive && !options.do_not_archive_results {
+    if options.repository.is_some() && !options.do_not_archive_results {
         add_results(PROJECT_NAME, &repository.unwrap(), &options.output_path, options.size_limit);
     }
 }
